@@ -1,44 +1,73 @@
-# herdr-plugin.toml — manifest for the github-issue-worktree plugin.
+# herdr-plugin.toml — manifest for the worktree plugin.
 #
-# "Start from a GitHub issue" that goes further than naming a tab: it reads the
-# issue's CONTENT (via `gh`), asks `claude -p` to draft meaningful names from
-# that content, then creates a real git WORKTREE + BRANCH (not just a tab) and
-# launches an agent inside it.
+# Covers the full worktree lifecycle around GitHub work:
 #
-# Flow (see scripts/prompt.js):
-#   1. paste an issue URL / number in the overlay, pick an agent
-#   2. `gh issue view` pulls the title/body/labels
-#   3. `claude -p` turns that into { branch, workspace } names
-#      (deterministic `issue-<n>-<title-slug>` fallback if claude/naming fails)
-#   4. `herdr worktree create --branch <branch> --label <workspace>` makes the
-#      worktree — which also fires `worktree.created`, so the superset-bootstrap
-#      plugin auto-runs the repo's setup in the fresh checkout
-#   5. the chosen agent starts in the worktree's root pane, seeded with the issue
+#   create — "start from a GitHub issue" that goes further than naming a tab:
+#     it reads the issue's CONTENT (via `gh`), asks `claude -p` to draft
+#     meaningful names from that content, then creates a real git WORKTREE +
+#     BRANCH (not just a tab) and launches an agent inside it. A PR or a raw
+#     branch name instead imports the existing remote branch into a worktree.
+#     See scripts/prompt.js:
+#       1. paste an issue/PR/branch ref in the overlay, pick an agent
+#       2. `gh issue view` / `gh pr view` pulls the title/body/labels (issue only)
+#       3. `claude -p` turns that into { branch, workspace } names (issue only;
+#          deterministic `issue-<n>-<title-slug>` fallback if claude/naming fails)
+#       4. `herdr worktree create --branch <branch> --label <workspace>` makes
+#          the worktree — which also fires `worktree.created`, so a plugin like
+#          herdr-plugin-superset-bootstrap can auto-run the repo's setup
+#       5. the chosen agent starts in the worktree's root pane, seeded with a
+#          prompt pointing at the issue/PR/branch
 #
-# NOTE: herdr 0.7.0's right-click menu does not render plugin actions, so trigger
-# this via a keybinding (see config.toml) or `herdr plugin action invoke`. The
-# contexts below are forward-looking metadata for when the menu becomes
-# plugin-extensible.
+#   remove — force-aware delete of the FOCUSED worktree. herdr's built-in
+#     `remove_worktree` calls `herdr worktree remove` WITHOUT --force, so any
+#     worktree with uncommitted/untracked changes (the usual state of an
+#     agent's checkout) refuses to delete and leaves the directory on disk.
+#     See scripts/remove.js:
+#       - clean worktree            -> remove immediately (headless) + notify
+#       - dirty worktree            -> open the confirm.js overlay, which lists
+#                                       the changes and force-removes only
+#                                       after you confirm (discards the work)
+#       - main checkout / non-worktree workspace -> just close the workspace
+#         (so a single "delete" keybinding still works for plain projects)
 #
-# Requires `gh` (authenticated) and `node` >= 18 on PATH; `claude` on PATH is
-# optional (only used to draft names — falls back to a title slug without it).
+# NOTE: herdr 0.7.0's right-click menu does not render plugin actions, so
+# trigger these via keybindings (see config.toml) or `herdr plugin action
+# invoke`. The contexts below are forward-looking metadata for when the menu
+# becomes plugin-extensible.
+#
+# Requires `gh` (authenticated), `git`, and `node` >= 18 on PATH; `claude` on
+# PATH is optional (only used by `create` to draft names from an issue body —
+# falls back to a title slug without it; PR/branch imports don't use it at all).
 
-id = "github-issue-worktree"
-name = "GitHub Issue/PR -> Worktree"
-version = "0.2.0"
-description = "Start a git worktree from a GitHub issue (new branch, claude-named), a PR (imports its remote head branch), or a raw branch name — auto-detected from the input."
+id = "worktree"
+name = "Worktree (create + remove)"
+version = "0.3.0"
+description = "Full worktree lifecycle: create a worktree from a GitHub issue (new branch, claude-named), a PR, or a raw branch name (auto-detected); force-aware remove of the focused worktree, with a confirmation overlay for dirty checkouts."
 min_herdr_version = "0.7.0"
 platforms = ["linux", "macos"]
 
 [[actions]]
-id = "start"
-title = "Start worktree from GitHub issue/PR"
+id = "create"
+title = "Create worktree from GitHub issue/PR"
 description = "Paste an issue ref (new branch, claude-named), a PR ref (imports the remote head branch), or a branch name; the plugin auto-detects which, creates a worktree, and launches an agent in it."
 contexts = ["workspace", "tab", "pane"]
 command = ["node", "scripts/open.js"]
+
+[[actions]]
+id = "remove"
+title = "Remove worktree / close workspace"
+description = "Worktree: clean -> remove immediately; dirty -> confirm, then force-remove so the checkout directory is deleted. Non-worktree workspace: just closes it."
+contexts = ["workspace", "tab", "pane"]
+command = ["node", "scripts/remove.js"]
 
 [[panes]]
 id = "prompt"
 title = "GitHub Issue/PR -> Worktree"
 placement = "overlay"
 command = ["node", "scripts/prompt.js"]
+
+[[panes]]
+id = "confirm"
+title = "Remove worktree?"
+placement = "overlay"
+command = ["node", "scripts/confirm.js"]

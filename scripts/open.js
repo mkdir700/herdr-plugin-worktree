@@ -14,7 +14,7 @@ const result = spawnSync(
     "pane",
     "open",
     "--plugin",
-    "github-issue-worktree",
+    "worktree",
     "--entrypoint",
     "prompt",
     "--placement",
