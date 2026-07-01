@@ -1,7 +1,9 @@
 "use strict";
 
-// Shared helpers for the worktree-remove plugin (used by remove.js + confirm.js).
+// Shared helpers for the worktree remove flow (used by remove.js + confirm.js).
 
+const fs = require("node:fs");
+const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
 const herdr = process.env.HERDR_BIN_PATH || "herdr";
@@ -137,6 +139,30 @@ function closeWorkspace(workspaceId) {
   return runHerdrJson(["workspace", "close", workspaceId]);
 }
 
+// Run the repo's `.superset/config.json` teardown commands in the worktree
+// checkout BEFORE it is deleted (the checkout — and the config with it — vanish
+// with the worktree). `.superset/config.json` is committed, so it's present in
+// the checkout. Best-effort: a missing/malformed config is a no-op and a failing
+// command never blocks removal. Replaces the retired superset-bootstrap plugin's
+// worktree.removed hook. Returns the commands it ran (for optional feedback).
+function runSupersetTeardown(wtPath) {
+  if (!wtPath) return [];
+  let cfg;
+  try {
+    cfg = JSON.parse(fs.readFileSync(path.join(wtPath, ".superset", "config.json"), "utf8"));
+  } catch {
+    return [];
+  }
+  const cmds = Array.isArray(cfg?.teardown)
+    ? cfg.teardown.filter((c) => typeof c === "string" && c.trim())
+    : [];
+  const env = { ...process.env, SUPERSET_WORKTREE_PATH: wtPath };
+  for (const cmd of cmds) {
+    run("/bin/sh", ["-c", cmd], { cwd: wtPath, env });
+  }
+  return cmds;
+}
+
 module.exports = {
   herdr,
   run,
@@ -148,4 +174,5 @@ module.exports = {
   dirtyFiles,
   removeWorktree,
   closeWorkspace,
+  runSupersetTeardown,
 };

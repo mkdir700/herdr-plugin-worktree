@@ -36,6 +36,7 @@ try {
   }
 
   if (lib.dirtyFiles(wt.path).length === 0) {
+    lib.runSupersetTeardown(wt.path);
     lib.removeWorktree(wt.workspaceId, false);
     lib.notify("Worktree removed", `${wt.branch || wt.label} (clean)`);
     process.exit(0);

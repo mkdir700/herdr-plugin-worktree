@@ -41,22 +41,22 @@
 
 id = "worktree"
 name = "Worktree (create + remove)"
-version = "0.3.0"
-description = "Full worktree lifecycle: create a worktree from a GitHub issue (new branch, claude-named), a PR, or a raw branch name (auto-detected); force-aware remove of the focused worktree, with a confirmation overlay for dirty checkouts."
+version = "0.4.0"
+description = "Full worktree lifecycle: create a worktree from a GitHub issue (new branch, claude-named), a PR, or a raw branch name (auto-detected), running the repo's .superset/config.json setup in the foreground before the agent starts; force-aware remove of the focused worktree (running .superset teardown first), with a confirmation overlay for dirty checkouts."
 min_herdr_version = "0.7.0"
 platforms = ["linux", "macos"]
 
 [[actions]]
 id = "create"
 title = "Create worktree from GitHub issue/PR"
-description = "Paste an issue ref (new branch, claude-named), a PR ref (imports the remote head branch), or a branch name; the plugin auto-detects which, creates a worktree, and launches an agent in it."
+description = "Paste an issue ref (new branch, claude-named), a PR ref (imports the remote head branch), or a branch name; the plugin auto-detects which, creates a worktree, runs the repo's .superset/config.json setup in the foreground, then launches an agent in it."
 contexts = ["workspace", "tab", "pane"]
 command = ["node", "scripts/open.js"]
 
 [[actions]]
 id = "remove"
 title = "Remove worktree / close workspace"
-description = "Worktree: clean -> remove immediately; dirty -> confirm, then force-remove so the checkout directory is deleted. Non-worktree workspace: just closes it."
+description = "Worktree: runs the repo's .superset/config.json teardown, then clean -> remove immediately; dirty -> confirm, then force-remove so the checkout directory is deleted. Non-worktree workspace: just closes it."
 contexts = ["workspace", "tab", "pane"]
 command = ["node", "scripts/remove.js"]
 

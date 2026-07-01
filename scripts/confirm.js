@@ -29,6 +29,7 @@ async function main() {
   const dirty = lib.dirtyFiles(wt.path);
   if (dirty.length === 0) {
     // Became clean between the action and now — just remove it.
+    lib.runSupersetTeardown(wt.path);
     lib.removeWorktree(wt.workspaceId, false);
     output.write(`Removed ${wt.branch || wt.label} (clean).\n`);
     return;
@@ -50,6 +51,7 @@ async function main() {
     return;
   }
 
+  lib.runSupersetTeardown(wt.path);
   lib.removeWorktree(wt.workspaceId, true);
   output.write(`\nRemoved ${wt.branch || wt.label} (forced — changes discarded).\n`);
 }

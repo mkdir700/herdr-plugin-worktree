@@ -479,8 +479,52 @@ function openWorktree(branch, label, cwd) {
   ]);
 }
 
-// Shared tail: resolve the root pane, start the agent, seed it, and focus the
-// new workspace once the overlay closes. Used by all three kinds.
+// The new worktree's checkout path, from whichever field the response carries.
+function checkoutPathOf(response) {
+  const r = response?.result || {};
+  return (
+    r.worktree?.path ||
+    r.worktree?.checkout_path ||
+    r.workspace?.worktree?.checkout_path ||
+    r.root_pane?.cwd ||
+    null
+  );
+}
+
+// Run the repo's `.superset/config.json` setup commands in the fresh checkout,
+// in the FOREGROUND (blocking, streamed into this overlay) BEFORE the agent
+// starts, so dependencies are installed by the time the agent takes over the
+// pane. This replaces the old event-driven superset-bootstrap plugin, which ran
+// setup detached in the background and raced the agent launch. `.superset/
+// config.json` is committed, so it's present in every worktree checkout.
+// Best-effort: a missing/malformed config is a no-op, and a failing command is
+// reported but never blocks the agent (you can fix it from the agent's pane).
+function runSupersetSetup(worktreeDir, config) {
+  if (!worktreeDir) return;
+  let cfg = null;
+  try {
+    cfg = readJsonFile(path.join(worktreeDir, ".superset", "config.json"));
+  } catch {
+    cfg = null;
+  }
+  const cmds = Array.isArray(cfg?.setup)
+    ? cfg.setup.filter((c) => typeof c === "string" && c.trim())
+    : [];
+  if (!cmds.length) return;
+
+  output.write(`\nRunning .superset setup (${cmds.length} command${cmds.length > 1 ? "s" : ""}) before starting the agent...\n`);
+  const env = { ...process.env, SUPERSET_WORKTREE_PATH: worktreeDir };
+  for (const cmd of cmds) {
+    output.write(`\n\x1b[36m$ ${cmd}\x1b[0m\n`);
+    const r = spawnSync("/bin/sh", ["-c", cmd], { cwd: worktreeDir, stdio: ["ignore", "inherit", "inherit"], env });
+    if (r.error) output.write(`  (failed to start: ${r.error.message} — continuing)\n`);
+    else if (r.status !== 0) output.write(`  (exited ${r.status} — continuing; the agent can help fix it)\n`);
+  }
+  output.write(`\nSetup done.\n`);
+}
+
+// Shared tail: run the repo's setup, resolve the root pane, start the agent, seed
+// it, and focus the new workspace once the overlay closes. Used by all three kinds.
 function launchAgent({ response, branch, agent, config, seedTemplate, seedValues }) {
   let { workspaceId, paneId } = extractIds(response);
   if (!workspaceId) {
@@ -489,8 +533,10 @@ function launchAgent({ response, branch, agent, config, seedTemplate, seedValues
   if (!paneId) paneId = rootPaneOf(workspaceId);
   if (!paneId) throw new Error(`could not resolve a root pane for workspace ${workspaceId}`);
 
-  output.write(`Starting ${agent} in ${workspaceId}...\n`);
   runHerdr(["pane", "rename", paneId, branch]);
+  runSupersetSetup(checkoutPathOf(response), config);
+
+  output.write(`Starting ${agent} in ${workspaceId}...\n`);
   runHerdr(["pane", "run", paneId, agentCommand(agent, config)]);
   sleep(config.timing.afterAgentStartMs);
 
