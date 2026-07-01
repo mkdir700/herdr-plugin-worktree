@@ -55,8 +55,11 @@ existing local branch of the same name is reused, never clobbered.
    plugin blocks on `herdr wait output` until they finish (or `setupTimeoutMs`
    elapses) before the agent starts. So `bun install` / submodule init happen in
    full view instead of a silent overlay that disappears.
-6. The chosen agent starts in that same pane, seeded with a prompt pointing at
-   the issue.
+6. The chosen agent starts in that same pane. The plugin waits for it to be
+   detected `idle`, lets its TUI settle (`afterAgentStartMs`), then **pastes**
+   the seed prompt (`herdr pane send-text`, so newlines and backticks stay
+   literal) and submits it with Enter — so the initial prompt reliably lands in
+   the input box instead of being typed before the agent is ready.
 
 ### Naming
 

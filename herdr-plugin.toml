@@ -42,7 +42,7 @@
 
 id = "worktree"
 name = "Worktree (create + remove)"
-version = "0.5.0"
+version = "0.5.1"
 description = "Full worktree lifecycle: create a worktree from a GitHub issue (new branch, claude-named), a PR, or a raw branch name (auto-detected), running the repo's .superset/config.json setup directly in the worktree pane (visible, blocking) before the agent starts; force-aware remove of the focused worktree (running .superset teardown first), with a confirmation overlay for dirty checkouts."
 min_herdr_version = "0.7.0"
 platforms = ["linux", "macos"]

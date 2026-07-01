@@ -10,8 +10,10 @@
   "prPromptTemplate": "Continue work on this pull request: {url}\n\nTitle: {title}\nBranch: {branch}\n\nRead it with `gh pr view {number}` and `gh pr diff {number}`, then propose a short plan before changing code.",
   "branchPromptTemplate": "You are on branch {branch} (imported from origin). Review the recent changes with `git log` / `git diff`, then propose a short plan before changing code.",
   "timing": {
-    "afterAgentStartMs": 1500,
+    "afterAgentStartMs": 2500,
     "afterPromptMs": 600,
-    "afterOverlayCloseFocusMs": 400
+    "afterOverlayCloseFocusMs": 400,
+    "setupTimeoutMs": 600000,
+    "agentReadyTimeoutMs": 30000
   }
 }

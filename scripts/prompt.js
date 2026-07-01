@@ -37,7 +37,18 @@ const defaultConfig = {
     "Continue work on this pull request: {url}\n\nTitle: {title}\nBranch: {branch}\n\nRead it with `gh pr view {number}` and `gh pr diff {number}`, then propose a short plan before changing code.",
   branchPromptTemplate:
     "You are on branch {branch} (imported from origin). Review the recent changes with `git log` / `git diff`, then propose a short plan before changing code.",
-  timing: { afterAgentStartMs: 1500, afterPromptMs: 600, afterOverlayCloseFocusMs: 400, setupTimeoutMs: 600000 },
+  timing: {
+    // Settle time AFTER the agent is detected `idle` before pasting the prompt,
+    // so a TUI (e.g. claude) has finished drawing its input box. herdr reports
+    // `idle` as soon as it detects the agent process (~0.5s), ~1.5s before the
+    // box is actually ready, so this must comfortably exceed that gap. Bump it
+    // on slower machines if the initial prompt still gets dropped.
+    afterAgentStartMs: 2500,
+    afterPromptMs: 600, // gap between pasting the prompt and pressing Enter
+    afterOverlayCloseFocusMs: 400,
+    setupTimeoutMs: 600000, // cap on how long .superset setup may block the agent
+    agentReadyTimeoutMs: 30000, // cap on waiting for the agent to be detected idle
+  },
 };
 
 // ---------------------------------------------------------------- utilities
@@ -547,6 +558,31 @@ function runSupersetSetupInPane(paneId, worktreeDir, config) {
   output.write(`Setup done.\n`);
 }
 
+// Type the initial prompt into the freshly-started agent and submit it.
+// `agentCommand` only LAUNCHES the agent; a TUI like claude then needs a second
+// or two to draw its input box. herdr marks the pane `idle` the moment it
+// DETECTS the agent process (~0.5s) — well before that input box exists — so a
+// prompt sent then is silently dropped (the exact "claude started but the seed
+// is gone" symptom). So: gate on `idle`, let the UI settle, then PASTE the
+// prompt with `send-text` (keeps newlines literal and skips shell expansion of
+// the backticks / `$` in the templates — unlike `pane run`) and submit it with
+// a single Enter. Best-effort: the idle wait uses run() so a timeout can't throw.
+function seedAgentPrompt(paneId, seed, config) {
+  run(herdr, [
+    "wait",
+    "agent-status",
+    paneId,
+    "--status",
+    "idle",
+    "--timeout",
+    String(config.timing.agentReadyTimeoutMs),
+  ]);
+  sleep(config.timing.afterAgentStartMs);
+  runHerdr(["pane", "send-text", paneId, seed]);
+  sleep(config.timing.afterPromptMs);
+  runHerdr(["pane", "send-keys", paneId, "enter"]);
+}
+
 // Shared tail: run the repo's setup, resolve the root pane, start the agent, seed
 // it, and focus the new workspace once the overlay closes. Used by all three kinds.
 function launchAgent({ response, branch, agent, config, seedTemplate, seedValues }) {
@@ -562,13 +598,9 @@ function launchAgent({ response, branch, agent, config, seedTemplate, seedValues
 
   output.write(`Starting ${agent} in ${workspaceId}...\n`);
   runHerdr(["pane", "run", paneId, agentCommand(agent, config)]);
-  sleep(config.timing.afterAgentStartMs);
 
   const seed = renderTemplate(seedTemplate, seedValues);
-  if (seed.trim()) {
-    runHerdr(["pane", "run", paneId, seed]);
-    sleep(config.timing.afterPromptMs);
-  }
+  if (seed.trim()) seedAgentPrompt(paneId, seed, config);
 
   focusWorkspaceAfterOverlayCloses(workspaceId, config.timing.afterOverlayCloseFocusMs);
   output.write(`\nDone. ${agent} is running in ${workspaceId} on branch ${branch}.\n`);
