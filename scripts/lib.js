@@ -93,10 +93,42 @@ function dirtyFiles(cwd) {
   return r.stdout.split("\n").map((l) => l.replace(/\s+$/, "")).filter(Boolean);
 }
 
-function removeWorktree(workspaceId, force) {
+function attemptRemoveWorktree(workspaceId, force) {
   const args = ["worktree", "remove", "--workspace", workspaceId, "--json"];
   if (force) args.push("--force");
-  return runHerdrJson(args);
+  const r = run(herdr, args);
+  if (r.error) throw new Error(`${herdr} ${args.join(" ")} failed to start: ${r.error.message}`);
+  const text = (r.stdout || r.stderr || "").trim();
+  let parsed = null;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    /* leave parsed null; handled below */
+  }
+  if (r.status === 0) {
+    if (!parsed) throw new Error(`${herdr} ${args.join(" ")} returned non-JSON: ${text}`);
+    return { ok: true, result: parsed };
+  }
+  return { ok: false, message: parsed?.error?.message || text || `exit ${r.status}` };
+}
+
+// git refuses to remove ANY worktree containing a submodule — even a clean
+// one — regardless of --force being the usual "dirty" escape hatch. Callers
+// only reach here with force=false after already confirming the worktree is
+// clean (see dirtyFiles), so retrying with --force on this specific error is
+// safe: it isn't discarding anything, it's working around git's blanket
+// submodule restriction.
+function removeWorktree(workspaceId, force) {
+  const attempt = attemptRemoveWorktree(workspaceId, force);
+  if (attempt.ok) return attempt.result;
+
+  if (!force && /submodules cannot be moved or removed/i.test(attempt.message)) {
+    const retry = attemptRemoveWorktree(workspaceId, true);
+    if (retry.ok) return retry.result;
+    throw new Error(retry.message);
+  }
+
+  throw new Error(attempt.message);
 }
 
 // Close a plain (non-worktree) workspace — same effect as the built-in
