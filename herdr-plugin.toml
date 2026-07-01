@@ -13,10 +13,11 @@
 #       3. `claude -p` turns that into { branch, workspace } names (issue only;
 #          deterministic `issue-<n>-<title-slug>` fallback if claude/naming fails)
 #       4. `herdr worktree create --branch <branch> --label <workspace>` makes
-#          the worktree — which also fires `worktree.created`, so a plugin like
-#          herdr-plugin-superset-bootstrap can auto-run the repo's setup
-#       5. the chosen agent starts in the worktree's root pane, seeded with a
-#          prompt pointing at the issue/PR/branch
+#          the worktree
+#       5. the repo's `.superset/config.json` setup commands run directly in the
+#          worktree's root pane (visible, and blocking via `herdr wait output`)
+#       6. the chosen agent starts in that same pane, seeded with a prompt
+#          pointing at the issue/PR/branch
 #
 #   remove — force-aware delete of the FOCUSED worktree. herdr's built-in
 #     `remove_worktree` calls `herdr worktree remove` WITHOUT --force, so any
@@ -41,15 +42,15 @@
 
 id = "worktree"
 name = "Worktree (create + remove)"
-version = "0.4.0"
-description = "Full worktree lifecycle: create a worktree from a GitHub issue (new branch, claude-named), a PR, or a raw branch name (auto-detected), running the repo's .superset/config.json setup in the foreground before the agent starts; force-aware remove of the focused worktree (running .superset teardown first), with a confirmation overlay for dirty checkouts."
+version = "0.5.0"
+description = "Full worktree lifecycle: create a worktree from a GitHub issue (new branch, claude-named), a PR, or a raw branch name (auto-detected), running the repo's .superset/config.json setup directly in the worktree pane (visible, blocking) before the agent starts; force-aware remove of the focused worktree (running .superset teardown first), with a confirmation overlay for dirty checkouts."
 min_herdr_version = "0.7.0"
 platforms = ["linux", "macos"]
 
 [[actions]]
 id = "create"
 title = "Create worktree from GitHub issue/PR"
-description = "Paste an issue ref (new branch, claude-named), a PR ref (imports the remote head branch), or a branch name; the plugin auto-detects which, creates a worktree, runs the repo's .superset/config.json setup in the foreground, then launches an agent in it."
+description = "Paste an issue ref (new branch, claude-named), a PR ref (imports the remote head branch), or a branch name; the plugin auto-detects which, creates a worktree, runs the repo's .superset/config.json setup directly in the worktree pane (so you see it), then launches an agent in it."
 contexts = ["workspace", "tab", "pane"]
 command = ["node", "scripts/open.js"]
 

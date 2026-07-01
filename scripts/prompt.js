@@ -37,7 +37,7 @@ const defaultConfig = {
     "Continue work on this pull request: {url}\n\nTitle: {title}\nBranch: {branch}\n\nRead it with `gh pr view {number}` and `gh pr diff {number}`, then propose a short plan before changing code.",
   branchPromptTemplate:
     "You are on branch {branch} (imported from origin). Review the recent changes with `git log` / `git diff`, then propose a short plan before changing code.",
-  timing: { afterAgentStartMs: 1500, afterPromptMs: 600, afterOverlayCloseFocusMs: 400 },
+  timing: { afterAgentStartMs: 1500, afterPromptMs: 600, afterOverlayCloseFocusMs: 400, setupTimeoutMs: 600000 },
 };
 
 // ---------------------------------------------------------------- utilities
@@ -491,16 +491,26 @@ function checkoutPathOf(response) {
   );
 }
 
-// Run the repo's `.superset/config.json` setup commands in the fresh checkout,
-// in the FOREGROUND (blocking, streamed into this overlay) BEFORE the agent
-// starts, so dependencies are installed by the time the agent takes over the
-// pane. This replaces the old event-driven superset-bootstrap plugin, which ran
-// setup detached in the background and raced the agent launch. `.superset/
-// config.json` is committed, so it's present in every worktree checkout.
-// Best-effort: a missing/malformed config is a no-op, and a failing command is
-// reported but never blocks the agent (you can fix it from the agent's pane).
-function runSupersetSetup(worktreeDir, config) {
-  if (!worktreeDir) return;
+// Friendly line printed in the worktree pane once the setup chain finishes;
+// `herdr wait output` matches it to know setup is done. When building the
+// printf argument the phrase is split (`'…setup ''complete'`) so the shell's
+// ECHO of the typed command never contains the contiguous phrase — only the
+// printed OUTPUT does — otherwise `wait output` would match the command echo
+// and return before setup actually ran.
+const SETUP_DONE_TEXT = ".superset setup complete";
+
+// Run the repo's `.superset/config.json` setup commands directly IN the new
+// worktree's root pane (visible + persistent in that pane's scrollback), and
+// block until they finish, BEFORE the agent command is typed into the same
+// pane. The previous version ran them via spawnSync in this OVERLAY, whose
+// output vanished when the overlay closed — so the worktree pane sat blank
+// during a long `bun install` and the setup was effectively invisible. Now the
+// commands (and their output) show up right where the user ends up working.
+// `.superset/config.json` is committed, so it's present in every worktree
+// checkout. Best-effort: a missing/malformed config is a no-op, and a slow or
+// stuck command only blocks until `setupTimeoutMs` before the agent starts.
+function runSupersetSetupInPane(paneId, worktreeDir, config) {
+  if (!paneId || !worktreeDir) return;
   let cfg = null;
   try {
     cfg = readJsonFile(path.join(worktreeDir, ".superset", "config.json"));
@@ -512,15 +522,29 @@ function runSupersetSetup(worktreeDir, config) {
     : [];
   if (!cmds.length) return;
 
-  output.write(`\nRunning .superset setup (${cmds.length} command${cmds.length > 1 ? "s" : ""}) before starting the agent...\n`);
-  const env = { ...process.env, SUPERSET_WORKTREE_PATH: worktreeDir };
-  for (const cmd of cmds) {
-    output.write(`\n\x1b[36m$ ${cmd}\x1b[0m\n`);
-    const r = spawnSync("/bin/sh", ["-c", cmd], { cwd: worktreeDir, stdio: ["ignore", "inherit", "inherit"], env });
-    if (r.error) output.write(`  (failed to start: ${r.error.message} — continuing)\n`);
-    else if (r.status !== 0) output.write(`  (exited ${r.status} — continuing; the agent can help fix it)\n`);
-  }
-  output.write(`\nSetup done.\n`);
+  output.write(`\nRunning .superset setup (${cmds.length} command${cmds.length > 1 ? "s" : ""}) in the worktree pane...\n`);
+  // Chain the commands with `;` (best-effort: one failing command doesn't stop
+  // the rest, matching the old behavior), then print the completion line on its
+  // own line, in green. The phrase is split (`'…setup ''complete'`) so the
+  // shell's echo of the typed command won't self-match the `wait output` below
+  // (see SETUP_DONE_TEXT).
+  const [donePrefix, doneSuffix] = SETUP_DONE_TEXT.split(/(?<=setup )/); // ".superset setup " | "complete"
+  const line = `${cmds.join("; ")}; printf '\\n\\033[32m✓ %s\\033[0m\\n' '${donePrefix}''${doneSuffix}'`;
+  runHerdr(["pane", "run", paneId, line]);
+  // Block until the completion line prints (or setupTimeoutMs elapses). Use run()
+  // (not runHerdr) so a timeout / non-zero exit never throws and blocks the agent.
+  run(herdr, [
+    "wait",
+    "output",
+    paneId,
+    "--match",
+    SETUP_DONE_TEXT,
+    "--source",
+    "recent",
+    "--timeout",
+    String(config.timing.setupTimeoutMs),
+  ]);
+  output.write(`Setup done.\n`);
 }
 
 // Shared tail: run the repo's setup, resolve the root pane, start the agent, seed
@@ -534,7 +558,7 @@ function launchAgent({ response, branch, agent, config, seedTemplate, seedValues
   if (!paneId) throw new Error(`could not resolve a root pane for workspace ${workspaceId}`);
 
   runHerdr(["pane", "rename", paneId, branch]);
-  runSupersetSetup(checkoutPathOf(response), config);
+  runSupersetSetupInPane(paneId, checkoutPathOf(response), config);
 
   output.write(`Starting ${agent} in ${workspaceId}...\n`);
   runHerdr(["pane", "run", paneId, agentCommand(agent, config)]);

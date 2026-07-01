@@ -49,12 +49,14 @@ existing local branch of the same name is reused, never clobbered.
    can't be parsed (naming never blocks the flow).
 4. `herdr worktree create --branch <branch> --label <workspace>` makes the
    worktree, **branched off the repo's default branch** (auto-detected — not
-   whatever branch you happened to trigger from). This fires `worktree.created`,
-   so a plugin like
-   [`herdr-plugin-superset-bootstrap`](https://github.com/mkdir700/herdr-plugin-superset-bootstrap)
-   can auto-run the repo's setup in the fresh checkout.
-5. The chosen agent starts in the worktree's root pane, seeded with a prompt
-   pointing at the issue.
+   whatever branch you happened to trigger from).
+5. If the checkout has a `.superset/config.json`, its `setup` commands run
+   **directly in the worktree's root pane** — you see the output live, and the
+   plugin blocks on `herdr wait output` until they finish (or `setupTimeoutMs`
+   elapses) before the agent starts. So `bun install` / submodule init happen in
+   full view instead of a silent overlay that disappears.
+6. The chosen agent starts in that same pane, seeded with a prompt pointing at
+   the issue.
 
 ### Naming
 
