@@ -383,16 +383,95 @@ function importRemoteBranch(branch, cwd) {
   return branch;
 }
 
+function repoRootOf(cwd) {
+  const r = run("git", ["-C", cwd, "rev-parse", "--show-toplevel"]);
+  return r.status === 0 ? r.stdout.trim() : cwd;
+}
+
+// Where herdr keeps this repo's linked worktrees. herdr lays them out as
+// <worktrees_dir>/<repo>/<slug>, so an existing linked worktree whose PARENT is
+// named after the repo pins the real (possibly user-configured) worktrees dir.
+// We match on that shape specifically to avoid inheriting some other tool's
+// out-of-tree checkout location (e.g. an external-disk worktree). Fall back to
+// herdr's default ~/.herdr/worktrees/<repo> when none matches; `worktree open
+// --path` accepts any valid path, so an approximate location is still harmless.
+function worktreeParentDir(cwd) {
+  const root = repoRootOf(cwd);
+  const repoName = path.basename(root);
+  const list = run("git", ["-C", cwd, "worktree", "list", "--porcelain"]);
+  if (list.status === 0) {
+    for (const line of list.stdout.split("\n")) {
+      if (!line.startsWith("worktree ")) continue;
+      const p = line.slice("worktree ".length).trim();
+      if (!p || path.resolve(p) === path.resolve(root)) continue;
+      if (path.basename(path.dirname(p)) === repoName) return path.dirname(p);
+    }
+  }
+  const home = process.env.HOME || require("node:os").homedir();
+  return path.join(home, ".herdr", "worktrees", repoName);
+}
+
+// git allows "/" in branch names; herdr flattens those to "-" for the checkout
+// dir (feature/x -> feature-x). Mirror that so imported worktrees sit alongside
+// herdr's own with matching names.
+function branchDirSlug(branch) {
+  return String(branch).replace(/\//g, "-");
+}
+
+function uniqueDir(parent, slug) {
+  let dir = path.join(parent, slug);
+  for (let n = 2; fs.existsSync(dir); n++) dir = path.join(parent, `${slug}-${n}`);
+  return dir;
+}
+
+// Path of the git worktree already checked out on `branch`, if any.
+function worktreePathForBranch(branch, cwd) {
+  const list = run("git", ["-C", cwd, "worktree", "list", "--porcelain"]);
+  if (list.status !== 0) return null;
+  let cur = null;
+  for (const line of list.stdout.split("\n")) {
+    if (line.startsWith("worktree ")) cur = line.slice("worktree ".length).trim();
+    else if (line.startsWith("branch ") && line.slice("branch ".length).trim() === `refs/heads/${branch}`) {
+      return cur;
+    }
+  }
+  return null;
+}
+
+// Materialize an on-disk git worktree for an EXISTING local branch, returning
+// its path. herdr's `worktree create` always makes a *new* branch (it fails if
+// the branch already exists) and `worktree open` only adopts a worktree that
+// already exists on disk — so neither can check out a pre-existing branch on its
+// own. The import flows therefore drive plain `git worktree add` here.
+function ensureWorktreeCheckout(branch, cwd) {
+  const existing = worktreePathForBranch(branch, cwd);
+  if (existing) {
+    output.write(`  (branch ${branch} already checked out at ${existing}; reusing it)\n`);
+    return existing;
+  }
+  const parent = worktreeParentDir(cwd);
+  fs.mkdirSync(parent, { recursive: true });
+  const dir = uniqueDir(parent, branchDirSlug(branch));
+  const add = run("git", ["-C", cwd, "worktree", "add", dir, branch]);
+  if (add.status !== 0) {
+    throw new Error(`git worktree add ${dir} ${branch} failed: ${(add.stderr || add.stdout || "").trim()}`);
+  }
+  return dir;
+}
+
 // Open an existing local branch as a worktree (used for imported PR/branch
 // flows; the issue flow uses `worktree create` to make a fresh branch instead).
+// We materialize the checkout on disk first, then adopt it by --path, because
+// `worktree open --branch` only finds a worktree that already exists.
 function openWorktree(branch, label, cwd) {
+  const dir = ensureWorktreeCheckout(branch, cwd);
   return runHerdrJson([
     "worktree",
     "open",
     "--cwd",
     cwd,
-    "--branch",
-    branch,
+    "--path",
+    dir,
     "--label",
     label,
     "--focus",
